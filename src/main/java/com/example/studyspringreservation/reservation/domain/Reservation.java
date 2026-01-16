@@ -1,14 +1,25 @@
 package com.example.studyspringreservation.reservation.domain;
 
+import com.example.studyspringreservation.reservation.exception.ReservationException;
 import jakarta.persistence.*;
+import lombok.AccessLevel;
 import lombok.Getter;
+import lombok.NoArgsConstructor;
 
-import java.lang.module.ResolutionException;
 import java.time.LocalDateTime;
 
-@Getter
 @Entity
-@Table(name = "reservation")
+@Table(
+        name = "reservation",
+        uniqueConstraints = {
+                @UniqueConstraint(
+                        name = "uk_exact_request",
+                        columnNames = {"resource_id", "start_at", "end_at", "user_id"}
+                )
+        }
+)
+@Getter
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Reservation {
 
     @Id
@@ -16,10 +27,10 @@ public class Reservation {
     private Long id;
 
     @Column(name = "resource_id", nullable = false)
-    private Long resourceId; //좌석
+    private Long resourceId;
 
-    @Column(name = "user_id", nullable = false, length = 50)
-    private String userId;
+    @Column(name = "user_id", nullable = false)
+    private Long userId;
 
     @Column(name = "start_at", nullable = false)
     private LocalDateTime startAt;
@@ -28,53 +39,68 @@ public class Reservation {
     private LocalDateTime endAt;
 
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false, length = 20)
+    @Column(nullable = false)
     private ReservationStatus status;
 
     @Column(name = "hold_expires_at")
     private LocalDateTime holdExpiresAt;
 
-    @Version
-    private Long version;
-
-    public void confirm(LocalDateTime now) {
-        if (status != ReservationStatus.HOLD) {
-            throw new ResolutionException("CONFIRM 불가 상태");
-        }
-        if (holdExpiresAt != null && holdExpiresAt.isBefore(now)) {
-            throw new ResolutionException("HOLD 만료");
-        }
-        this.status = ReservationStatus.CONFIRMED;
-    }
-
-    public void cancel() {
-        if (status != ReservationStatus.HOLD) {
-            throw new ResolutionException("CANCEL 불가 상태");
-        }
-        this.status = ReservationStatus.CANCELED;
-    }
-
-    public void expire(LocalDateTime now) {
-        if (status == ReservationStatus.HOLD && holdExpiresAt != null && holdExpiresAt.isBefore(now)) {
-            this.status = ReservationStatus.EXPIRED;
-        }
-    }
+    /* ======================
+       생성
+       ====================== */
 
     public static Reservation hold(
             Long resourceId,
-            String userId,
+            Long userId,
             LocalDateTime startAt,
             LocalDateTime endAt,
             LocalDateTime holdExpiresAt
     ) {
-        Reservation reservation = new Reservation();
-        reservation.resourceId = resourceId;
-        reservation.userId = userId;
-        reservation.startAt = startAt;
-        reservation.endAt = endAt;
-        reservation.status = ReservationStatus.HOLD;
-        reservation.holdExpiresAt = holdExpiresAt;
-        return reservation;
+        Reservation r = new Reservation();
+        r.resourceId = resourceId;
+        r.userId = userId;
+        r.startAt = startAt;
+        r.endAt = endAt;
+        r.holdExpiresAt = holdExpiresAt;
+        r.status = ReservationStatus.HOLD;
+        return r;
     }
 
+    /* ======================
+       상태 전이
+       ====================== */
+
+    public void confirm(LocalDateTime now) {
+        if (status != ReservationStatus.HOLD) {
+            throw new ReservationException("HOLD 상태가 아니면 확정할 수 없습니다.");
+        }
+        if (holdExpiresAt.isBefore(now)) {
+            throw new ReservationException("예약이 만료되었습니다.");
+        }
+        this.status = ReservationStatus.CONFIRMED;
+    }
+
+    public void expire(LocalDateTime now) {
+        if (status == ReservationStatus.HOLD && holdExpiresAt.isBefore(now)) {
+            this.status = ReservationStatus.EXPIRED;
+        }
+    }
+
+    public void cancel() {
+        if (status == ReservationStatus.EXPIRED) {
+            throw new ReservationException("만료된 예약은 취소할 수 없습니다.");
+        }
+        if (status == ReservationStatus.CANCELED) {
+            return;
+        }
+        this.status = ReservationStatus.CANCELED;
+    }
+
+    /* ======================
+       조회 헬퍼
+       ====================== */
+
+    public boolean isActive() {
+        return status == ReservationStatus.HOLD || status == ReservationStatus.CONFIRMED;
+    }
 }
